@@ -1,0 +1,12 @@
+name: AnalisisInversiones
+title: AnalisisInversiones
+username:
+account: christian-suarez-gil
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 3044585
+bundleId: 3756271
+url: https://christian-suarez-gil.shinyapps.io/AnalisisInversiones/
+when: 1603070430.32087
+asMultiple: FALSE
+asStatic: FALSE
