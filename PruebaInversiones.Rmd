@@ -1,0 +1,384 @@
+---
+title: "Prueba Inversiones"
+author: "Christian Suarez"
+date: "18/10/2020"
+output: html_document
+---
+
+
+```{r setup, include=TRUE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+```
+
+# Punto 1
+
+## Parte 1
+
+Cargar las librerías a utilizar
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+library(shiny)
+library(plotly)
+library(dplyr)
+library(tidyverse)
+library(polycor)
+library(lubridate)
+library(tidyr)
+## Framework for Financial Data Extracting and modeling
+library(quantmod)
+```
+
+### Cargar los datos necesarios
+
+Lectura y creación de los DataFrames mediante conexion a Yahoo Finance, para este punto se cargarn los datos de la TRM y el valor del petroleto WTI
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+TRM <- getSymbols("USDCOP=X",auto.assign=FALSE, from="2008-01-01", src='yahoo')
+WTI <- getSymbols("WTI",auto.assign=FALSE, from="2008-01-01", src='yahoo')
+
+## Estandarizar nombres de columnas
+names(TRM)<-c('Open','High','Low','Close','Volume','Adjusted')
+names(WTI)<-c('Open','High','Low','Close','Volume','Adjusted')
+
+## Transformar bases de datos a Data Frames
+TRM <- data.frame(Date=index(TRM), coredata(TRM))
+WTI <- data.frame(Date=index(WTI), coredata(WTI))
+```
+
+### Revisión y transformación de ambos DataSets
+
+Revisión de posibles valores NA
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+colSums(is.na(TRM))
+colSums(is.na(WTI))
+filter(TRM, is.na(Open))
+```
+
+Vemos que los datos del WTI estan completos, mientras que los de la TRM contienen algunos NA, al revisar en la web, estas fechas si tienen datos por lo cual se trata de un error en la BD,
+para efectos practicos de este ejercicio los reemplazaremos con el valor anterior, sin embargo, en el futuro seria necesario buscar una fuente adicional para cubrirlos y contar un base más precisa
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+TRM<-TRM %>% fill(Open, High, Low, Close,Volume, Adjusted)
+```
+
+Inspeccion de los data frames
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+str(TRM)
+str(WTI)
+```
+Vemos que hay menos filas en WTI que en TRM, asi que revisaremos los valores faltantes en ambas
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+miss <- filter(TRM, !Date %in% WTI$Date)
+tail(miss,20)
+```
+Vemos que en la base de WTI no hay valores para los festivos en Estados Unidos, mientras que en la de TRM si, por lo cual para efectos del analisis eliminaremos estos Datos para contar con bases comparables, espeicalmente de cara al analisis de correlacion
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+TRM<- filter(TRM, !Date %in% miss$Date)
+```
+
+Ahora, hacemos la misma revision para revision de manera opuesta
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+miss<- filter(WTI, !Date %in% TRM$Date)
+tail(miss,20)
+```
+Por otro lado, vemos que en TRM estan todos los dias que estan en WTI, por lo cual podemos continuar sin realizar màs ajustes.
+
+Ahora, ponemos columnas con el mes y el año para facilitar la elaboración de los graficos.
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+TRM$Month<- format(as.Date(TRM$Date), "%Y-%m")
+TRM$Year<- format(as.Date(TRM$Date), "%Y")
+WTI$Month<- format(as.Date(WTI$Date), "%Y-%m")
+WTI$Year<- format(as.Date(WTI$Date), "%Y")
+```
+
+
+Grafico de la TRM y corrección de datos
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+fig <- plot_ly(TRM, x = ~Date, y = ~Close, type = 'scatter', mode = 'lines')
+fig
+errors<-filter(TRM, Low <1000)
+errors
+```
+Como podemos ver en la grafica hay algunos datos atipicos  y despues de consultar otras fuentes de datos se puede concluir que son datos erroneos en la BD de Yahoo, por lo cual será necesario ajustarlos. Asi mismo, Vemos que el error es solo en las columnas Low, Close y Adjusted, dado que son pocos datos no nos alterara mucho el analisis y los podemos ajustar a partir de los datos que estan correctos. Asi que teemplazaremos los valores errones con el precio de apertura el dia.
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+TRM <- TRM %>% mutate(Close= ifelse(Close < 1000, Open, Close)) %>% 
+      mutate(Low= ifelse(Low < 1000, Close, Low)) %>% 
+      mutate(Adjusted= ifelse(Adjusted < 1000, Open, Adjusted)) 
+```
+
+
+
+### Elaboración de los gráficos necesarios.
+
+Creación de funcion para graficar
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+graficar<-function(data,periodo,tipo){
+   fig <- plot_ly(data, x = ~Date, y = ~Close, type = 'scatter', mode = 'lines',name = 'Close')
+   fig <-fig %>% add_trace(y = ~Low, name = 'Low', line = list(color = I('red'), width = 1))
+   fig <-fig %>% add_trace(y = ~High, name = 'High', line = list(color = I('green'), width = 1))
+   fig <- fig %>% layout(title = paste("Serie ", tipo,  periodo),
+                         xaxis = list(title = "Fecha"),
+                         yaxis = list (title = "Valor"))
+   
+   fig
+}
+```
+
+#### Gráfica Serie TRM Diaria
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+graficar(TRM,'Diaria','TRM')
+```
+
+Para las gráficas mensuales y anuales se calcularon los valores de la siguiente manera:
+- El valor de Cierre es el ultimo valor de Cierre Registrado en el periodio.
+- El valor Minimo es el menor valor durante todo el periodo.
+- El valor Máximo  es el mayor valor durante todo el periodo.
+
+Observacion: no trabajamos con el promedio aritmetico, sino con el ultimo valor del cierre del mes, dado que el promedio es un buen estimador del comportamiento de variables con ciertas distribuciones como la normal, pero al no conocer aún la dsitribucion de probabilidad de esta variable es mejor no utilizarlo.
+
+#### Gráfica Serie TRM Mensual 
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-group_by(TRM,Month) 
+temp<-summarize(temp, last(Close),max(Close), min(Close))
+names(temp)<-c('Date','Close','High','Low')
+graficar(temp,'Semanal','TRM')
+```
+
+#### Gráfica Serie TRM Anual
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-group_by(TRM,Year) 
+temp<-summarize(temp, last(Close),max(Close), min(Close))
+names(temp)<-c('Date','Close','High','Low')
+graficar(temp,'Mensual','TRM')
+
+```
+
+#### Gráfica Serie WTI Diaria
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+graficar(WTI,'Diaria','WTI')
+```
+
+
+#### Gráfica Serie WTI Mensual
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-group_by(WTI,Month) 
+temp<-summarize(temp, last(Close),max(Close), min(Close))
+names(temp)<-c('Date','Close','High','Low')
+graficar(temp,'Mensual','WTI')
+```
+
+
+#### Gráfica Serie WTI Anual
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-group_by(WTI,Year) 
+temp<-summarize(temp, last(Close),max(Close), min(Close))
+names(temp)<-c('Date','Close','High','Low')
+graficar(temp,'Mensual','WTI')
+```
+
+
+#### BoxPlots TRM Mensual
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+fig <- plot_ly(TRM, y = ~Close, color = ~Month, type = "box",boxpoints = FALSE)
+fig <- fig %>% layout(title = "BoxPlot por meses TRM (precio Cierre)",
+                      xaxis = list(title = "Fecha"),
+                      yaxis = list (title = "Valor $"),showlegend = FALSE)
+
+fig
+```
+
+
+#### BoxPlots WTI Mensual
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+fig <- plot_ly(WTI, y = ~Close, color = ~Month, type = "box",boxpoints = FALSE)
+fig <- fig %>% layout(title = "BoxPlot por meses WTI(precio Cierre)",
+                      xaxis = list(title = "Fecha"),
+                      yaxis = list (title = "Valor USD"),showlegend = FALSE)
+
+fig
+```
+
+### Analisis de Correlacion entre el precio del Petroleo y la TRM
+
+Para el analisis de correlacion uniremos ambos DataSets
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+DataSet<- merge(TRM,WTI,by.x='Date',by.y='Date',all=TRUE)
+DataSet<-select(DataSet, Date, Close.x, Close.y,Year.x)
+names(DataSet)<-c('Date','TRM','WTI','Year')
+```
+
+Elaboraremos primero un scatter plot para ver graficamente la relacion entre las variables y el comportamiento con el paso de los años
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+p <- ggplot(DataSet, aes( WTI, TRM ) ) +
+      geom_point(aes( colour = Year )) +
+      geom_smooth(method = 'loess' )
+
+fig <- ggplotly(p)
+fig <- fig %>% layout(title = "TRM vs WTI",showlegend = FALSE)
+fig
+```
+Al observar la grafica anterior podemos notar que las dos variables estan estrechamente. Sin embargo, esta relacion no es lineal, sino posiblemente exponencial. 
+Para analizar de una manera exploratoria inicial la relacion entre estas dos variables, a pesar de su relacion aparentemente exponencial, transformaremos el WTI en su logaritmo para asi lograr aproximar la relacion a lineal.
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+
+DataSet$LogWTI<-log(DataSet$WTI)
+
+p <- ggplot(DataSet, aes( LogWTI, TRM ) ) +
+      geom_point(aes( colour = Year )) +
+      geom_smooth(aes( group = 1 ))
+
+fig <- ggplotly(p)
+fig <- fig %>% layout(title = "TRM vs WTI",showlegend = FALSE)
+
+fig
+
+cor(DataSet$TRM,DataSet$WTI,use = 'complete.obs')
+cor(DataSet$TRM,DataSet$LogWTI,use = 'complete.obs')
+
+```
+
+
+A partir del resultado anterior podemos concluir que las dos variables estan relacionadas fuertemente de manera inversa y aproximadamente exponencial, ya que obtuvimos un coeficiente de correlacion de -0.85 al trabajar con el log del WTI.
+
+
+
+
+#### Tabla de valores Maximo, minimo y promedio por año e indicador.
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+ResumenTRM<-group_by(TRM,Year) 
+ResumenTRM<-summarize(ResumenTRM, mean(Close),max(Close), min(Close))
+names(ResumenTRM)<-c('Año','Promedio','Maximo','Minimo')
+knitr::kable(ResumenTRM, format.args = list(scientific = FALSE))
+```
+
+
+### Analisis y Conclusiones
+
+#### Conclusiones
+
+A pesar de que se observa una fuerte correlacion entre el valor de la TRM y el valor del petroleto, tambien se puede concluir que el precio del petroleo no es suficiente para explicar completamente el valor de la TRM, ya que vemos valores muy diferentes para la TRM entre los años 2020 vs 2016 y 2019 vs 2015 a pesar que entre estos pares de años el valor del petroleo se comportó de manera simular. Eso implicaria que, aunque el precio del petroleo impacta fuertemente el valor de la TRM, hay otras variables que también están afectando su valor y que deben ser incluidas y analizadas en un modelo que pretenda estimar el valor de la TRM en el futuro. Por ejemplo se podría buscar aislar la influencia del precio del petroleo de la tendencia natural de la TRM a subir(ya que se observa a lo largo de casi toda la serie) o incluir variables relacionados con la balanza comercial, crecimiento del PIB, comportamiento de las bolsas de USA, etc. 
+
+Al analizar las series de la TRM y del WTI, podemos observar que el tema del coronavirus impactó  ambas variables, en la TRM causando un gran crecimiento en marzo y en el precio del petroleo una  caida enttre enero y marzo. Pero a apartir de Julio, la TRM parece haber recuperado su tendencia normal aunque en un nivel mas alto, lo que podría ser la nueva normalidad para esta variable en un entorno de pandemia.
+
+
+# Punto 2
+
+Lectura de los datos
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+Empresas<-read.csv('BASE.txt',sep = ';')
+Monedas <-read.csv('Monedas.txt',sep = ';')
+```
+
+Revision de la estructura de la informacion
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+str(Empresas)
+str(Monedas)
+```
+Inicialmente, vemos que la fecha quedo como un factor, por lo cual la converteriemos a formato fecha para facilitar su manipulacion
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+Empresas$Fecha<-dmy(Empresas$Fecha)
+Monedas$Fecha<-dmy(Monedas$FECHA)
+Monedas$FECHA<-NULL
+```
+
+Ahora revisaremos el estado de los datos numericos
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+tapply(Empresas$Empresa, Empresas$Moneda, summary)
+```
+Vemos que tenemos algunos registros de una empresa llamada "EmpresaC" en la Base datos, y dado que la base datos solo debe contener informacion  de 3 empresas, y que los registros de las otras 3 empresas estan completos(365 dias), asumiremos que estos datos de la "EmpresaC" se deben a un error en la generacion de la informacion y los eliminaremos.
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+Empresas<-filter(Empresas,Empresa != 'EmpresaC')
+
+temp<-group_by(Empresas,Empresa,Moneda)
+summarize(temp, mean(Ingreso),max(Ingreso),min(Ingreso))
+```
+Los valores numericos aparentemente se ven correctamente leidos y sin datos atipicos
+
+Ahora realizaremos un Join para contar con toda la información necesaria en el mismo DataFrame
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+df <-merge(x = Empresas, y = Monedas, by = "Fecha", all.x = TRUE)
+
+df <- df %>% mutate(IngresoPesos= case_when(Moneda == 'USD' ~ Ingreso*USD,
+                                            Moneda == 'EURO' ~ Ingreso*EURO,
+                                            Moneda == 'PESO' ~ Ingreso))
+
+## Revisar que no hayan quedado NAs
+colSums(is.na(df))
+```
+
+
+#### 2.1 Sub total de ingreso por empresa donde la monera de origen es USD
+En este numeral entiendo que se desean analizar unicamente las inversiones en USD
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-filter(df,Moneda == 'USD')
+temp<-group_by(temp,Empresa)
+temp<-data.frame(summarise(temp, IngresosUD =sum(Ingreso)))
+knitr::kable(temp, format.args = list(scientific = FALSE))
+```
+
+
+#### 2.2 Ingreso total por moneda de la empresa A
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-filter(df,Empresa == 'Empresa A')
+temp<-group_by(temp,Moneda)
+temp<-data.frame(summarise(temp, IngresosUD =sum(Ingreso)))
+knitr::kable(temp, format.args = list(scientific = FALSE))
+```
+
+#### 2.3 Empresa con Menor ingreso durante el primer semestre del 2017
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-filter(df,Fecha <=dmy('30/06/2017'))
+temp<-group_by(temp,Empresa)
+temp<- data.frame(summarise(temp, Ingresos =sum(IngresoPesos)))
+temp<-temp[order(temp$Ingresos),]
+temp<-temp[1,]
+knitr::kable(temp, format.args = list(scientific = FALSE))
+```
+
+#### 2.4 Ingresos para todos los trimestres de 2017 en pesos para cada trimestre
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-df
+temp$Trimestre<-quarter(temp$Fecha)
+temp<-group_by(temp,Empresa,Trimestre)
+temp<- data.frame(summarise(temp, Ingresos =sum(IngresoPesos)))
+knitr::kable(temp, format.args = list(scientific = FALSE))
+```
+
+#### 2.5 Inreso acumulado del año 2017 en pesos por empresa y moneda
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+temp<-group_by(df,Empresa,Moneda)
+temp<-data.frame(summarise(temp, Ingresos =sum(IngresoPesos)))
+knitr::kable(temp, format.args = list(scientific = FALSE))
+```
+
+#### Analisis
+
+```{r, echo=TRUE,message=FALSE,error=FALSE,warning=FALSE}
+data<-df
+data$Mes<- format(as.Date(data$Fecha), "%Y-%m")
+data<-select(data,Empresa,Moneda,Mes,IngresoPesos)
+data<-group_by(data,Empresa,Moneda,Mes)
+data<-data.frame(summarise(data, Ingresos =sum(IngresoPesos)))
+
+p <- ggplot(data, aes(x=Mes, y=Ingresos,group=Moneda)) + geom_line(aes(color=Moneda))
+p + facet_grid(rows = vars(Empresa))+ geom_smooth(method = "lm",se = FALSE,linetype = "dashed", size=0.2)
+```
+
+
+A partir del grafico anterior podemos concluir lo siguiente:
+
+* Los ingresos que se tuvieron en 2017 en las 3 empresas por las inversiones en Euros son bastante bajas comparadas con los ingresos en las otras dos monedas, sin embargo seria necesario conocer la cantidad invertidad para analizar si estas inversiones en Euros estan siendo rentables o no.
+* Respecto a la inversiones en USD se observa que los retornos son bastante variables y con una marcada tendencia decreciente mes a mes. Esto a pesar de que el Dolar tuvo un tendencia a la alza a lo largo del año, lo cual podria indicar que los resultados de estas empresas no estan siendo menos positivos con el paso de los meses. Sin embargo, a pesar de la tendencia a la baja, el resultado neto anual es positivo.
+* Respecto a las inversiones en pesos, vemos que  son los que generan la mayor cantida de ingresos, aunque habria que analizar la cantidad de dinero invertido para saber que tan rentable estan siendo. Por otro lado, se observa una tendencia estable, con excepcion de una reduccion muy marcada en Julio, la cual se presentó en todas las empresas, lo cual podria indicador que en este mes se presento un hecho puntual en el pais. Pero, tambien podria ser una señal de que las 3 empresas pertenecen al mismo setor, y de ser este el caso  valdria la pena explorar la opcion de diversificar, invirtiendo en otro sector, para que todo el portafolio no se vea afectado de la misma manera ante hechos que impacten fuertemente un sector en particular.
+
+
